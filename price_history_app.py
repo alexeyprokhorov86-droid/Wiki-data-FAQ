@@ -115,15 +115,11 @@ class PriceHistoryExtractor:
     ) -> list[dict]:
         """Получает документы приобретения за период"""
         
-        # Формат даты для OData 1С (проверенный)
-        date_from_str = date_from.strftime("%Y-%m-%dT00:00:00")
-        date_to_str = date_to.strftime("%Y-%m-%dT23:59:59")
-        
-        # Фильтр по дате и статусу проведения
-        filter_query = f"Date ge datetime'{date_from_str}' and Date le datetime'{date_to_str}' and Posted eq true"
+        # 1С OData не поддерживает фильтр по Date в этой конфигурации
+        # Загружаем все проведённые документы, фильтруем локально
         
         params = {
-            "$filter": filter_query,
+            "$filter": "Posted eq true",
             "$format": "json"
         }
         
@@ -131,8 +127,7 @@ class PriceHistoryExtractor:
         
         # Отладка
         if progress_callback:
-            progress_callback(f"URL: {url}")
-            progress_callback(f"Filter: {filter_query}")
+            progress_callback(f"Загрузка документов (фильтрация по дате будет локально)...")
         
         all_documents = []
         page = 1
@@ -188,8 +183,27 @@ class PriceHistoryExtractor:
         if not documents:
             return pd.DataFrame()
         
+        # Фильтруем по дате локально (OData 1С не поддерживает фильтр по Date)
         if progress_callback:
-            progress_callback(f"Получено {len(documents)} документов, обрабатываю...")
+            progress_callback(f"Фильтрация {len(documents)} документов по дате...")
+        
+        filtered_docs = []
+        for doc in documents:
+            doc_date_str = doc.get('Date', '')[:10]
+            try:
+                doc_date = datetime.strptime(doc_date_str, "%Y-%m-%d")
+                if date_from.date() <= doc_date.date() <= date_to.date():
+                    filtered_docs.append(doc)
+            except:
+                continue
+        
+        documents = filtered_docs
+        
+        if progress_callback:
+            progress_callback(f"После фильтрации: {len(documents)} документов за период")
+        
+        if not documents:
+            return pd.DataFrame()
         
         price_records = []
         total = len(documents)

@@ -124,7 +124,6 @@ class PriceHistoryExtractor:
         
         params = {
             "$filter": filter_query,
-            "$orderby": "Date desc",
             "$format": "json"
         }
         
@@ -577,4 +576,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

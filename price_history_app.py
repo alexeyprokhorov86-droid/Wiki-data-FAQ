@@ -130,6 +130,16 @@ class PriceHistoryExtractor:
         
         url = f"{self.base_url}/Document_ПриобретениеТоваровУслуг"
         
+        # Отладка
+        if progress_callback:
+            progress_callback(f"URL: {url}")
+            progress_callback(f"Filter: {filter_query}")
+        
+        all_documents = []
+        page = 1
+        
+        url = f"{self.base_url}/Document_ПриобретениеТоваровУслуг"
+        
         all_documents = []
         page = 1
         
@@ -138,6 +148,9 @@ class PriceHistoryExtractor:
                 response = self.session.get(url, params=params, timeout=60)
                 
                 if response.status_code != 200:
+                    if progress_callback:
+                        progress_callback(f"HTTP Error: {response.status_code}")
+                        progress_callback(f"Response: {response.text[:500]}")
                     break
                 
                 data = response.json()
@@ -145,7 +158,7 @@ class PriceHistoryExtractor:
                 all_documents.extend(documents)
                 
                 if progress_callback:
-                    progress_callback(f"Загружено {len(all_documents)} документов...")
+                    progress_callback(f"Страница {page}: получено {len(documents)} док., всего {len(all_documents)}")
                 
                 next_link = data.get('odata.nextLink') or data.get('@odata.nextLink')
                 if next_link:
@@ -341,11 +354,12 @@ def main():
         st.success("✅ Подключение установлено")
         
         # Загружаем данные
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
+        progress_container = st.empty()
+        log_messages = []
         
         def update_progress(text):
-            progress_text.text(text)
+            log_messages.append(text)
+            progress_container.code("\n".join(log_messages[-10:]))  # Последние 10 сообщений
         
         with st.spinner("Загрузка данных из 1С..."):
             df = extractor.extract_price_history(
@@ -354,11 +368,9 @@ def main():
                 progress_callback=update_progress
             )
         
-        progress_bar.empty()
-        progress_text.empty()
-        
         if df.empty:
             st.warning("Нет данных за выбранный период")
+            st.info("Проверьте лог выше на наличие ошибок")
             return
         
         st.session_state.prices_df = df
@@ -565,3 +577,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

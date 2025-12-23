@@ -115,9 +115,11 @@ class PriceHistoryExtractor:
     ) -> list[dict]:
         """Получает документы приобретения за период"""
         
+        # Формат даты для OData 1С (проверенный)
         date_from_str = date_from.strftime("%Y-%m-%dT00:00:00")
         date_to_str = date_to.strftime("%Y-%m-%dT23:59:59")
         
+        # Фильтр по дате и статусу проведения
         filter_query = f"Date ge datetime'{date_from_str}' and Date le datetime'{date_to_str}' and Posted eq true"
         
         params = {
@@ -173,6 +175,9 @@ class PriceHistoryExtractor:
         
         if not documents:
             return pd.DataFrame()
+        
+        if progress_callback:
+            progress_callback(f"Получено {len(documents)} документов, обрабатываю...")
         
         price_records = []
         total = len(documents)

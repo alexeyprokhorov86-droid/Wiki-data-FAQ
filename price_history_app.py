@@ -141,14 +141,23 @@ def main():
     with st.sidebar:
         st.header("📅 Период")
         
-        min_date = stats["min_date"] or datetime.now().date() - timedelta(days=365)
-        max_date = stats["max_date"] or datetime.now().date()
+        # Безопасная обработка дат
+        today = datetime.now().date()
+        min_date = stats["min_date"] if stats["min_date"] else today - timedelta(days=365)
+        max_date = stats["max_date"] if stats["max_date"] else today
+        
+        # Убедимся что min_date <= max_date
+        if min_date > max_date:
+            min_date, max_date = max_date, min_date
+        
+        # Значение по умолчанию для date_from
+        default_from = max(min_date, max_date - timedelta(days=365))
         
         col1, col2 = st.columns(2)
         with col1:
             date_from = st.date_input(
                 "С",
-                value=max_date - timedelta(days=365),
+                value=default_from,
                 min_value=min_date,
                 max_value=max_date,
                 format="DD.MM.YYYY"

@@ -47,9 +47,8 @@ class Sync1C:
             CONFIG_1C["password"]
         )
         self.session.headers.update({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json; charset=utf-8'
-        })
+    'Accept': 'application/json'
+})
         self.base_url = CONFIG_1C["base_url"]
         
         # Кэши

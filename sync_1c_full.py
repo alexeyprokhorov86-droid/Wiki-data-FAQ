@@ -69,56 +69,111 @@ class Sync1C:
             print(f"Ошибка подключения: {e}")
             return False
     
-    def get_all_documents(self, entity_name, filter_posted=True, batch_size=1000):
-        """Универсальный метод загрузки всех документов порциями"""
+    def get_all_documents(self, entity_name, filter_posted=True, batch_size=200):
+        """Загрузка документов порциями с поиском проблемных документов"""
         from urllib.parse import quote
         
-        # URL-кодируем название сущности (для кириллицы)
         encoded_entity = quote(entity_name, safe='_')
-        
-        params = {
-            "$format": "json",
-            "$top": str(batch_size)
-        }
-        if filter_posted:
-            params["$filter"] = "Posted eq true"
-        
         url = f"{self.base_url}/{encoded_entity}"
         all_docs = []
         skip = 0
+        problem_docs = []
+        
+        def try_load(skip_val, top_val):
+            """Попытка загрузить порцию"""
+            params = {
+                "$format": "json",
+                "$top": str(top_val),
+                "$skip": str(skip_val)
+            }
+            if filter_posted:
+                params["$filter"] = "Posted eq true"
+            
+            try:
+                r = self.session.get(url, params=params, timeout=120)
+                if r.status_code == 200:
+                    return r.json().get('value', [])
+                return None
+            except:
+                return None
+        
+        def find_problem_doc(start_skip, batch):
+            """Бинарный поиск проблемного документа"""
+            print(f"  Поиск проблемного документа в диапазоне {start_skip}-{start_skip + batch}...")
+            
+            # Пробуем по одному
+            if batch <= 10:
+                for i in range(batch):
+                    docs = try_load(start_skip + i, 1)
+                    if docs is None:
+                        print(f"  >>> ПРОБЛЕМНЫЙ ДОКУМЕНТ на позиции {start_skip + i}")
+                        # Пробуем получить соседние документы для контекста
+                        before = try_load(start_skip + i - 1, 1)
+                        after = try_load(start_skip + i + 1, 1)
+                        
+                        info = f"Позиция: {start_skip + i}"
+                        if before:
+                            info += f", перед ним: №{before[0].get('Number', '?')} от {before[0].get('Date', '?')[:10]}"
+                        if after:
+                            info += f", после него: №{after[0].get('Number', '?')} от {after[0].get('Date', '?')[:10]}"
+                        
+                        problem_docs.append(info)
+                        return start_skip + i
+                    elif docs:
+                        all_docs.extend(docs)
+                return start_skip + batch
+            
+            # Бинарный поиск
+            mid = batch // 2
+            
+            # Пробуем первую половину
+            docs = try_load(start_skip, mid)
+            if docs is None:
+                return find_problem_doc(start_skip, mid)
+            else:
+                if docs:
+                    all_docs.extend(docs)
+                    print(f"  Загружено {len(all_docs)} записей...")
+            
+            # Пробуем вторую половину
+            docs = try_load(start_skip + mid, batch - mid)
+            if docs is None:
+                return find_problem_doc(start_skip + mid, batch - mid)
+            else:
+                if docs:
+                    all_docs.extend(docs)
+                    print(f"  Загружено {len(all_docs)} записей...")
+            
+            return start_skip + batch
         
         while True:
-            try:
-                current_params = params.copy()
-                if skip > 0:
-                    current_params["$skip"] = str(skip)
-                
-                r = self.session.get(url, params=current_params, timeout=120)
-                if r.status_code != 200:
-                    print(f"  Ошибка HTTP {r.status_code}: {r.text[:300]}")
-                    break
-                
-                data = r.json()
-                docs = data.get('value', [])
-                
-                if not docs:
-                    break
-                
-                all_docs.extend(docs)
-                print(f"  Загружено {len(all_docs)} записей...")
-                
-                # Если получили меньше чем batch_size, значит это последняя порция
-                if len(docs) < batch_size:
-                    break
-                
-                skip += batch_size
-                time.sleep(0.3)
-                
-            except Exception as e:
-                print(f"  Ошибка: {e}")
+            docs = try_load(skip, batch_size)
+            
+            if docs is None:
+                # Ошибка — ищем проблемный документ
+                skip = find_problem_doc(skip, batch_size)
+                time.sleep(0.5)
+                continue
+            
+            if not docs:
                 break
+            
+            all_docs.extend(docs)
+            print(f"  Загружено {len(all_docs)} записей...")
+            
+            if len(docs) < batch_size:
+                break
+            
+            skip += batch_size
+            time.sleep(0.3)
         
-        return all_docs
+        if problem_docs:
+            print(f"\n  !!! НАЙДЕНЫ ПРОБЛЕМНЫЕ ДОКУМЕНТЫ ({len(problem_docs)}):")
+            for pd in problem_docs:
+                print(f"      {pd}")
+            print()
+        
+        return all_docs    
     
     def get_catalog(self, catalog_name, batch_size=1000):
         """Загрузка справочника"""

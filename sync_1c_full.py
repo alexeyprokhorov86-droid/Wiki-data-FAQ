@@ -352,74 +352,34 @@ class Sync1C:
     # ========== ПРОДАЖИ ==========
     
     def sync_sales(self, conn, date_from, date_to):
-        """Синхронизация продаж (реализации + корректировки) помесячно"""
-        from urllib.parse import quote
-        
+        """Синхронизация продаж (реализации + корректировки)"""
         print("\n[ПРОДАЖИ]")
         
-        # Загружаем реализации помесячно
-        print("  Загрузка реализаций помесячно...")
-        sales_docs = []
+        # Загружаем реализации порциями по 200
+        print("  Загрузка реализаций...")
+        sales_docs = self.get_all_documents("Document_РеализацияТоваровУслуг", batch_size=200)
         
-        current = date_from
-        while current <= date_to:
-            # Конец месяца
-            if current.month == 12:
-                month_end = date(current.year + 1, 1, 1) - timedelta(days=1)
-            else:
-                month_end = date(current.year, current.month + 1, 1) - timedelta(days=1)
-            
-            if month_end > date_to:
-                month_end = date_to
-            
-            date_filter = f"Date ge datetime'{current}T00:00:00' and Date le datetime'{month_end}T23:59:59' and Posted eq true"
-            
-            print(f"    {current.strftime('%Y-%m')}...", end=" ")
-            
-            encoded_entity = quote("Document_РеализацияТоваровУслуг", safe='_')
-            
-            params = {
-                "$format": "json",
-                "$filter": date_filter
-            }
-            
-            try:
-                r = self.session.get(f"{self.base_url}/{encoded_entity}", params=params, timeout=180)
-                if r.status_code == 200:
-                    docs = r.json().get('value', [])
-                    sales_docs.extend(docs)
-                    print(f"{len(docs)} док.")
-                else:
-                    print(f"ОШИБКА {r.status_code}")
-            except Exception as e:
-                print(f"ОШИБКА: {e}")
-            
-            # Переход к следующему месяцу
-            if current.month == 12:
-                current = date(current.year + 1, 1, 1)
-            else:
-                current = date(current.year, current.month + 1, 1)
-            
-            time.sleep(0.3)
-        
-        print(f"  Всего реализаций: {len(sales_docs)}")
-        
-        # Загружаем корректировки (их мало, грузим как раньше)
+        # Загружаем корректировки
         print("  Загрузка корректировок...")
         corrections = self.get_all_documents("Document_КорректировкаРеализации", batch_size=500)
         
-        # Фильтруем корректировки по дате
-        filtered_corrections = []
-        for doc in corrections:
-            doc_date_str = doc.get('Date', '')[:10]
-            try:
-                doc_date = datetime.strptime(doc_date_str, "%Y-%m-%d").date()
-                if date_from <= doc_date <= date_to:
-                    filtered_corrections.append(doc)
-            except:
-                continue
+        # Фильтруем по дате локально
+        def filter_by_date(docs):
+            filtered = []
+            for doc in docs:
+                doc_date_str = doc.get('Date', '')[:10]
+                try:
+                    doc_date = datetime.strptime(doc_date_str, "%Y-%m-%d").date()
+                    if date_from <= doc_date <= date_to:
+                        filtered.append(doc)
+                except:
+                    continue
+            return filtered
         
-        print(f"  Корректировок за период: {len(filtered_corrections)}")
+        sales_docs = filter_by_date(sales_docs)
+        corrections = filter_by_date(corrections)
+        
+        print(f"  После фильтрации: {len(sales_docs)} реализаций, {len(corrections)} корректировок")
         
         records = []
         
@@ -429,7 +389,6 @@ class Sync1C:
             doc_number = doc.get('Number', '').strip()
             doc_id = doc.get('Ref_Key')
             
-            # Клиент
             client_key = doc.get('Партнер_Key') or doc.get('Контрагент_Key')
             client_name = self.get_name_by_key(
                 self.contractors_cache, "Catalog_Партнеры", client_key
@@ -437,7 +396,6 @@ class Sync1C:
                 self.contractors_cache, "Catalog_Контрагенты", client_key
             )
             
-            # Грузополучатель
             consignee_key = doc.get('Грузополучатель_Key')
             consignee_name = None
             if consignee_key and consignee_key != EMPTY_UUID:
@@ -445,7 +403,6 @@ class Sync1C:
                     self.consignees_cache, "Catalog_Партнеры", consignee_key
                 )
             
-            # Логистика
             pallets = doc.get('АгросервисИТ_КоличествоПаллетов', '0')
             try:
                 pallets = float(pallets) if pallets else 0
@@ -455,7 +412,6 @@ class Sync1C:
             logistics_fact = doc.get('АгросервисИТ_ФактическаяСтоимостьТраспортныхРасходов', 0) or 0
             logistics_plan = doc.get('АгросервисИТ_ПлановаяСтоимостьТраспортныхРасходов', 0) or 0
             
-            # Товары
             for item in doc.get('Товары', []):
                 nom_key = item.get('Номенклатура_Key')
                 if not nom_key or nom_key == EMPTY_UUID:
@@ -495,7 +451,7 @@ class Sync1C:
                 })
         
         # Обрабатываем корректировки
-        for doc in filtered_corrections:
+        for doc in corrections:
             doc_date = doc.get('Date', '')[:10]
             doc_number = doc.get('Number', '').strip()
             doc_id = doc.get('Ref_Key')
@@ -524,7 +480,6 @@ class Sync1C:
                 quantity = float(item.get('Количество', 0) or 0)
                 sum_without_vat = float(item.get('Сумма', 0) or 0)
                 sum_with_vat = float(item.get('СуммаСНДС', 0) or 0)
-                
                 price = sum_without_vat / quantity if quantity != 0 else 0
                 
                 records.append({

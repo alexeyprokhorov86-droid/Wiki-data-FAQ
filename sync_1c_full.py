@@ -78,6 +78,7 @@ class Sync1C:
         all_docs = []
         skip = 0
         problem_docs = []
+        skip_positions = set()  # Позиции которые нужно пропустить
         
         def try_load(skip_val, top_val):
             """Попытка загрузить порцию"""
@@ -101,48 +102,53 @@ class Sync1C:
             """Бинарный поиск проблемного документа"""
             print(f"  Поиск проблемного документа в диапазоне {start_skip}-{start_skip + batch}...")
             
-            # Пробуем по одному
+            # Пробуем по одному когда диапазон маленький
             if batch <= 10:
                 for i in range(batch):
-                    docs = try_load(start_skip + i, 1)
-                    if docs is None:
-                        print(f"  >>> ПРОБЛЕМНЫЙ ДОКУМЕНТ на позиции {start_skip + i}")
-                        # Пробуем получить соседние документы для контекста
-                        before = try_load(start_skip + i - 1, 1)
-                        after = try_load(start_skip + i + 1, 1)
+                    pos = start_skip + i
+                    if pos in skip_positions:
+                        continue
                         
-                        info = f"Позиция: {start_skip + i}"
+                    docs = try_load(pos, 1)
+                    if docs is None:
+                        # Получаем инфо о соседних документах
+                        before = try_load(pos - 1, 1)
+                        after = try_load(pos + 1, 1)
+                        
+                        info = f"Позиция: {pos}"
                         if before:
-                            info += f", перед ним: №{before[0].get('Number', '?')} от {before[0].get('Date', '?')[:10]}"
+                            info += f"\n        Документ ДО: №{before[0].get('Number', '?').strip()} от {before[0].get('Date', '?')[:10]} (Ref_Key: {before[0].get('Ref_Key', '?')})"
                         if after:
-                            info += f", после него: №{after[0].get('Number', '?')} от {after[0].get('Date', '?')[:10]}"
+                            info += f"\n        Документ ПОСЛЕ: №{after[0].get('Number', '?').strip()} от {after[0].get('Date', '?')[:10]} (Ref_Key: {after[0].get('Ref_Key', '?')})"
+                        
+                        print(f"  >>> ПРОБЛЕМНЫЙ ДОКУМЕНТ на позиции {pos}")
+                        if before:
+                            print(f"      Документ ДО: №{before[0].get('Number', '?').strip()} от {before[0].get('Date', '?')[:10]}")
+                        if after:
+                            print(f"      Документ ПОСЛЕ: №{after[0].get('Number', '?').strip()} от {after[0].get('Date', '?')[:10]}")
                         
                         problem_docs.append(info)
-                        return start_skip + i
+                        skip_positions.add(pos)
                     elif docs:
                         all_docs.extend(docs)
                 return start_skip + batch
             
-            # Бинарный поиск
+            # Бинарный поиск - делим пополам
             mid = batch // 2
             
-            # Пробуем первую половину
             docs = try_load(start_skip, mid)
             if docs is None:
-                return find_problem_doc(start_skip, mid)
-            else:
-                if docs:
-                    all_docs.extend(docs)
-                    print(f"  Загружено {len(all_docs)} записей...")
+                find_problem_doc(start_skip, mid)
+            elif docs:
+                all_docs.extend(docs)
+                print(f"  Загружено {len(all_docs)} записей...")
             
-            # Пробуем вторую половину
             docs = try_load(start_skip + mid, batch - mid)
             if docs is None:
-                return find_problem_doc(start_skip + mid, batch - mid)
-            else:
-                if docs:
-                    all_docs.extend(docs)
-                    print(f"  Загружено {len(all_docs)} записей...")
+                find_problem_doc(start_skip + mid, batch - mid)
+            elif docs:
+                all_docs.extend(docs)
+                print(f"  Загружено {len(all_docs)} записей...")
             
             return start_skip + batch
         
@@ -150,8 +156,9 @@ class Sync1C:
             docs = try_load(skip, batch_size)
             
             if docs is None:
-                # Ошибка — ищем проблемный документ
-                skip = find_problem_doc(skip, batch_size)
+                # Ошибка — ищем проблемный документ и пропускаем
+                find_problem_doc(skip, batch_size)
+                skip += batch_size  # Переходим к следующей порции
                 time.sleep(0.5)
                 continue
             
@@ -173,7 +180,7 @@ class Sync1C:
                 print(f"      {pd}")
             print()
         
-        return all_docs    
+        return all_docs
     
     def get_catalog(self, catalog_name, batch_size=1000):
         """Загрузка справочника"""

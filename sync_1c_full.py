@@ -357,7 +357,7 @@ class Sync1C:
         
         # Загружаем реализации
         print("  Загрузка реализаций...")
-        sales_docs = self.get_all_documents("Document_РеализацияТоваровУслуг")
+        sales_docs = self.get_all_documents("Document_РеализацияТоваровУслуг", batch_size=500)
         
         # Загружаем корректировки
         print("  Загрузка корректировок...")

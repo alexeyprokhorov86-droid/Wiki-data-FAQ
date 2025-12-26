@@ -20,8 +20,8 @@ import time
 
 CONFIG_1C = {
     "base_url": "http://185.126.95.33:81/NB_KA/odata/standard.odata",
-    "username": "ВАШ_ЛОГИН_1С",
-    "password": "ВАШ_ПАРОЛЬ_1С",
+    "username": "odata.user",
+    "password": "gE9tibul",
 }
 
 CONFIG_PG = {

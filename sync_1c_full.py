@@ -413,7 +413,7 @@ class Sync1C:
     
     # ========== ПРОДАЖИ ==========
     
-       def sync_sales(self, conn, date_from, date_to):
+    def sync_sales(self, conn, date_from, date_to):
         """Синхронизация продаж с фильтрацией по дате на сервере"""
         from urllib.parse import quote
         

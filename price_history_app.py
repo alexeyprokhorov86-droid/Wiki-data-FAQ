@@ -246,41 +246,68 @@ def page_purchases(date_from, date_to):
     st.caption("Документы: Приобретение товаров и услуг (Проведённые)")
     
     df = load_purchases(str(date_from), str(date_to))
+    analysis_df = get_purchases_analysis(str(date_from), str(date_to))
     
     if df.empty:
         st.warning("Нет данных о закупках за выбранный период")
         return
     
+    # ========== МЕТРИКИ ==========
+    st.subheader("📈 Статистика за период")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Записей", f"{len(df):,}")
     col2.metric("Поставщиков", df['Поставщик'].nunique())
     col3.metric("Позиций", df['Номенклатура'].nunique())
-    col4.metric("Сумма", f"{df['Сумма'].sum():,.0f} ₽")
+    col4.metric("Сумма закупок", f"{df['Сумма'].sum():,.0f} ₽")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Данные", "📊 Анализ цен", "📈 Динамика", "🏆 Топ изменений"])
+    # ========== ФИЛЬТРЫ ==========
+    st.subheader("🔍 Фильтры")
+    col1, col2 = st.columns(2)
+    with col1:
+        suppliers = ['Все'] + sorted(df['Поставщик'].dropna().unique().tolist())
+        selected_supplier = st.selectbox("Поставщик", suppliers, key="purch_supplier")
+    with col2:
+        search_text = st.text_input("Поиск по номенклатуре", "", key="purch_search")
+    
+    # Применяем фильтры
+    filtered_df = df.copy()
+    filtered_analysis = analysis_df.copy()
+    
+    if selected_supplier != 'Все':
+        filtered_df = filtered_df[filtered_df['Поставщик'] == selected_supplier]
+        filtered_analysis = filtered_analysis[filtered_analysis['Поставщик'] == selected_supplier]
+    
+    if search_text:
+        mask = filtered_df['Номенклатура'].str.lower().str.contains(search_text.lower(), na=False)
+        filtered_df = filtered_df[mask]
+        mask_analysis = filtered_analysis['Номенклатура'].str.lower().str.contains(search_text.lower(), na=False)
+        filtered_analysis = filtered_analysis[mask_analysis]
+    
+    # ========== ВКЛАДКИ ==========
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Все данные", "📊 Анализ цен", "📈 Динамика", "🏆 Топ изменений"])
     
     with tab1:
-        col1, col2 = st.columns(2)
-        with col1:
-            suppliers = ['Все'] + sorted(df['Поставщик'].dropna().unique().tolist())
-            supplier = st.selectbox("Поставщик", suppliers, key="purch_supplier")
-        with col2:
-            search = st.text_input("Поиск по номенклатуре", key="purch_search")
-        
-        filtered = df.copy()
-        if supplier != 'Все':
-            filtered = filtered[filtered['Поставщик'] == supplier]
-        if search:
-            filtered = filtered[filtered['Номенклатура'].str.lower().str.contains(search.lower(), na=False)]
-        
-        st.dataframe(filtered, use_container_width=True, hide_index=True)
-        csv = filtered.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Скачать CSV", csv, "закупки.csv", "text/csv")
+        st.subheader(f"Данные ({len(filtered_df)} записей)")
+        st.dataframe(
+            filtered_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Дата": st.column_config.DateColumn("Дата", format="DD.MM.YYYY"),
+                "Цена": st.column_config.NumberColumn("Цена", format="%.2f ₽"),
+                "Сумма": st.column_config.NumberColumn("Сумма", format="%.2f ₽"),
+            }
+        )
+        csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 Скачать CSV", csv, "история_цен.csv", "text/csv")
     
     with tab2:
-        analysis = get_purchases_analysis(str(date_from), str(date_to))
-        if not analysis.empty:
-            st.dataframe(analysis, use_container_width=True, hide_index=True,
+        st.subheader("Анализ по позициям")
+        if not filtered_analysis.empty:
+            st.dataframe(
+                filtered_analysis,
+                use_container_width=True,
+                hide_index=True,
                 column_config={
                     "Цена_мин": st.column_config.NumberColumn("Мин", format="%.2f ₽"),
                     "Цена_макс": st.column_config.NumberColumn("Макс", format="%.2f ₽"),
@@ -289,17 +316,33 @@ def page_purchases(date_from, date_to):
                     "Цена_последняя": st.column_config.NumberColumn("Последняя", format="%.2f ₽"),
                     "Изменение_%": st.column_config.NumberColumn("Изм. %", format="%.1f%%"),
                     "Всего_сумма": st.column_config.NumberColumn("Сумма", format="%.0f ₽"),
-                })
+                }
+            )
     
     with tab3:
-        nomenclatures = sorted(df['Номенклатура'].unique().tolist())
+        st.subheader("Динамика цены")
+        nomenclatures = sorted(filtered_df['Номенклатура'].unique().tolist())
+        
         if nomenclatures:
             selected_nom = st.selectbox("Выберите позицию", nomenclatures, key="purch_nom")
+            
             if selected_nom:
-                nom_df = df[df['Номенклатура'] == selected_nom].copy()
+                nom_df = filtered_df[filtered_df['Номенклатура'] == selected_nom].copy()
+                
                 if len(nom_df) > 1:
-                    fig = px.line(nom_df, x='Дата', y='Цена', color='Поставщик', markers=True,
-                                  title=f"Динамика цены: {selected_nom}")
+                    fig = px.line(
+                        nom_df,
+                        x='Дата',
+                        y='Цена',
+                        color='Поставщик',
+                        markers=True,
+                        title=f"Динамика цены: {selected_nom}"
+                    )
+                    fig.update_layout(
+                        xaxis_title="Дата",
+                        yaxis_title="Цена, ₽",
+                        hovermode='x unified'
+                    )
                     st.plotly_chart(fig, use_container_width=True)
                     
                     col1, col2, col3 = st.columns(3)
@@ -307,30 +350,37 @@ def page_purchases(date_from, date_to):
                     col2.metric("Макс. цена", f"{nom_df['Цена'].max():.2f} ₽")
                     first_price = nom_df.sort_values('Дата')['Цена'].iloc[0]
                     last_price = nom_df.sort_values('Дата')['Цена'].iloc[-1]
-                    col3.metric("Изменение", f"{last_price:.2f} ₽", f"{last_price - first_price:+.2f} ₽")
+                    change = last_price - first_price
+                    col3.metric("Изменение", f"{last_price:.2f} ₽", f"{change:+.2f} ₽")
                 else:
-                    st.info("Недостаточно данных для графика")
+                    st.info("Недостаточно данных для графика (нужно минимум 2 записи)")
     
     with tab4:
-        analysis = get_purchases_analysis(str(date_from), str(date_to))
-        if not analysis.empty:
-            multi = analysis[analysis['Поставок'] > 1].copy()
+        if not filtered_analysis.empty:
+            multi = filtered_analysis[filtered_analysis['Поставок'] > 1].copy()
+            
             if not multi.empty:
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.subheader("📈 Топ роста цены")
-                    st.dataframe(multi.nlargest(10, 'Изменение_%')[
+                    st.subheader("📈 Топ по росту цены")
+                    top_growth = multi.nlargest(10, 'Изменение_%')[
                         ['Номенклатура', 'Поставщик', 'Цена_первая', 'Цена_последняя', 'Изменение_%']
-                    ], hide_index=True, use_container_width=True)
-                with col2:
-                    st.subheader("📉 Топ снижения цены")
-                    st.dataframe(multi.nsmallest(10, 'Изменение_%')[
-                        ['Номенклатура', 'Поставщик', 'Цена_первая', 'Цена_последняя', 'Изменение_%']
-                    ], hide_index=True, use_container_width=True)
+                    ]
+                    st.dataframe(top_growth, hide_index=True, use_container_width=True)
                 
-                fig = px.histogram(multi, x='Изменение_%', nbins=30, title="Распределение изменений (%)")
+                with col2:
+                    st.subheader("📉 Топ по снижению цены")
+                    top_decline = multi.nsmallest(10, 'Изменение_%')[
+                        ['Номенклатура', 'Поставщик', 'Цена_первая', 'Цена_последняя', 'Изменение_%']
+                    ]
+                    st.dataframe(top_decline, hide_index=True, use_container_width=True)
+                
+                st.subheader("Распределение изменений цен")
+                fig = px.histogram(multi, x='Изменение_%', nbins=30, title="Распределение изменений цен (%)")
                 fig.add_vline(x=0, line_dash="dash", line_color="red")
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Недостаточно данных для анализа (нужны позиции с 2+ поставками)")
 
 
 def page_sales(date_from, date_to):
@@ -552,6 +602,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 

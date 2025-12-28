@@ -188,20 +188,34 @@ def get_sales_by_nomenclature(date_from: str, date_to: str):
 def load_nomenclature_hierarchy():
     conn = get_connection()
     
+    # Загружаем виды номенклатуры
     query_types = """
-        WITH RECURSIVE type_tree AS (
-            SELECT id, parent_id, name, is_folder, 0 as level, name as full_path
-            FROM nomenclature_types WHERE parent_id IS NULL
-            UNION ALL
-            SELECT nt.id, nt.parent_id, nt.name, nt.is_folder, tt.level + 1,
-                   tt.full_path || ' → ' || nt.name
-            FROM nomenclature_types nt
-            JOIN type_tree tt ON nt.parent_id = tt.id
-        )
-        SELECT id, name, full_path, level, is_folder FROM type_tree ORDER BY full_path
+        SELECT id, parent_id, name, is_folder FROM nomenclature_types
     """
     types_df = pd.read_sql(query_types, conn)
     
+    # Строим иерархию в Python (надёжнее чем рекурсивный SQL)
+    if not types_df.empty:
+        type_dict = types_df.set_index('id').to_dict('index')
+        
+        def get_full_path(type_id, visited=None):
+            if visited is None:
+                visited = set()
+            if type_id is None or pd.isna(type_id) or type_id in visited:
+                return ""
+            visited.add(type_id)
+            if type_id not in type_dict:
+                return ""
+            item = type_dict[type_id]
+            parent_path = get_full_path(item.get('parent_id'), visited)
+            name = item.get('name', '')
+            if parent_path:
+                return f"{parent_path} → {name}"
+            return name
+        
+        types_df['full_path'] = types_df['id'].apply(lambda x: get_full_path(x))
+    
+    # Загружаем номенклатуру
     query_nom = """
         SELECT n.id, n.name as "Наименование", n.article as "Артикул",
                n.code as "Код", n.type_id, n.weight as "Вес"
@@ -221,20 +235,49 @@ def load_nomenclature_hierarchy():
 @st.cache_data(ttl=300)
 def get_nomenclature_types_tree():
     conn = get_connection()
-    query = """
-        WITH RECURSIVE type_tree AS (
-            SELECT id, parent_id, name, is_folder, 0 as level, name as path
-            FROM nomenclature_types WHERE parent_id IS NULL
-            UNION ALL
-            SELECT nt.id, nt.parent_id, nt.name, nt.is_folder, tt.level + 1,
-                   tt.path || ' → ' || nt.name
-            FROM nomenclature_types nt JOIN type_tree tt ON nt.parent_id = tt.id
-        )
-        SELECT path as "Иерархия", name as "Название", 
-               CASE WHEN is_folder THEN 'Группа' ELSE 'Вид' END as "Тип", level as "Уровень"
-        FROM type_tree ORDER BY path
-    """
-    return pd.read_sql(query, conn)
+    query = "SELECT id, parent_id, name, is_folder FROM nomenclature_types"
+    types_df = pd.read_sql(query, conn)
+    
+    if types_df.empty:
+        return types_df
+    
+    # Строим иерархию в Python
+    type_dict = types_df.set_index('id').to_dict('index')
+    
+    def get_full_path(type_id, visited=None):
+        if visited is None:
+            visited = set()
+        if type_id is None or pd.isna(type_id) or type_id in visited:
+            return ""
+        visited.add(type_id)
+        if type_id not in type_dict:
+            return ""
+        item = type_dict[type_id]
+        parent_path = get_full_path(item.get('parent_id'), visited)
+        name = item.get('name', '')
+        if parent_path:
+            return f"{parent_path} → {name}"
+        return name
+    
+    def get_level(type_id, visited=None):
+        if visited is None:
+            visited = set()
+        if type_id is None or pd.isna(type_id) or type_id in visited:
+            return 0
+        visited.add(type_id)
+        if type_id not in type_dict:
+            return 0
+        parent_id = type_dict[type_id].get('parent_id')
+        if parent_id is None or pd.isna(parent_id):
+            return 0
+        return 1 + get_level(parent_id, visited)
+    
+    types_df['Иерархия'] = types_df['id'].apply(lambda x: get_full_path(x))
+    types_df['Уровень'] = types_df['id'].apply(lambda x: get_level(x))
+    types_df['Тип'] = types_df['is_folder'].apply(lambda x: 'Группа' if x else 'Вид')
+    types_df = types_df.rename(columns={'name': 'Название'})
+    
+    return types_df[['Иерархия', 'Название', 'Тип', 'Уровень']].sort_values('Иерархия')
 
 
 # ============================================================
@@ -602,25 +645,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

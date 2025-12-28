@@ -414,57 +414,79 @@ class Sync1C:
     # ========== ПРОДАЖИ ==========
     
     def sync_sales(self, conn, date_from, date_to):
-        """Синхронизация продаж с фильтрацией по дате на сервере"""
+        """Синхронизация продаж с локальной фильтрацией по дате"""
         from urllib.parse import quote
         
         print("\n[ПРОДАЖИ]")
         
-        # Загружаем реализации с фильтром по дате на сервере
+        # Загружаем реализации порциями
         print("  Загрузка реализаций...")
         
         encoded_entity = quote("Document_РеализацияТоваровУслуг", safe='_')
         url = f"{self.base_url}/{encoded_entity}"
         
-        date_filter = f"Date ge datetime'{date_from}T00:00:00' and Date le datetime'{date_to}T23:59:59' and Posted eq true"
-        
         sales_docs = []
         skip = 0
-        batch_size = 500
+        batch_size = 100
+        consecutive_errors = 0
+        max_consecutive_errors = 10
         
-        while True:
+        while consecutive_errors < max_consecutive_errors:
             params = {
                 "$format": "json",
-                "$filter": date_filter,
+                "$filter": "Posted eq true",
                 "$top": str(batch_size),
                 "$skip": str(skip)
             }
             
             try:
                 r = self.session.get(url, params=params, timeout=120)
+                
+                if r.status_code == 500:
+                    print(f"  Ошибка 500 на skip={skip}, пропускаем порцию...")
+                    skip += batch_size
+                    consecutive_errors += 1
+                    time.sleep(0.5)
+                    continue
+                
                 if r.status_code != 200:
-                    print(f"  Ошибка HTTP {r.status_code} на skip={skip}")
+                    print(f"  Ошибка HTTP {r.status_code}")
                     break
                 
                 docs = r.json().get('value', [])
+                
                 if not docs:
                     break
                 
-                sales_docs.extend(docs)
-                print(f"  Загружено {len(sales_docs)} реализаций...")
+                # Фильтруем по дате локально
+                for doc in docs:
+                    doc_date_str = doc.get('Date', '')[:10]
+                    try:
+                        doc_date = datetime.strptime(doc_date_str, "%Y-%m-%d").date()
+                        if date_from <= doc_date <= date_to:
+                            sales_docs.append(doc)
+                    except:
+                        continue
+                
+                print(f"  Обработано {skip + len(docs)}, подходящих: {len(sales_docs)}...")
+                
+                consecutive_errors = 0
                 
                 if len(docs) < batch_size:
                     break
                 
                 skip += batch_size
-                time.sleep(0.3)
+                time.sleep(0.2)
                 
             except Exception as e:
-                print(f"  Ошибка: {e}")
-                break
+                print(f"  Ошибка на skip={skip}: {e}, пропускаем...")
+                skip += batch_size
+                consecutive_errors += 1
+                time.sleep(0.5)
         
-        print(f"  Всего реализаций: {len(sales_docs)}")
+        print(f"  Всего реализаций за период: {len(sales_docs)}")
         
-        # Загружаем корректировки с фильтром по дате
+        # Загружаем корректировки
         print("  Загрузка корректировок...")
         
         encoded_corr = quote("Document_КорректировкаРеализации", safe='_')
@@ -472,38 +494,54 @@ class Sync1C:
         
         corrections = []
         skip = 0
+        consecutive_errors = 0
         
-        while True:
+        while consecutive_errors < max_consecutive_errors:
             params = {
                 "$format": "json",
-                "$filter": date_filter,
+                "$filter": "Posted eq true",
                 "$top": str(batch_size),
                 "$skip": str(skip)
             }
             
             try:
                 r = self.session.get(url_corr, params=params, timeout=120)
+                
+                if r.status_code == 500:
+                    skip += batch_size
+                    consecutive_errors += 1
+                    continue
+                
                 if r.status_code != 200:
                     break
                 
                 docs = r.json().get('value', [])
+                
                 if not docs:
                     break
                 
-                corrections.extend(docs)
-                print(f"  Загружено {len(corrections)} корректировок...")
+                for doc in docs:
+                    doc_date_str = doc.get('Date', '')[:10]
+                    try:
+                        doc_date = datetime.strptime(doc_date_str, "%Y-%m-%d").date()
+                        if date_from <= doc_date <= date_to:
+                            corrections.append(doc)
+                    except:
+                        continue
+                
+                consecutive_errors = 0
                 
                 if len(docs) < batch_size:
                     break
                 
                 skip += batch_size
-                time.sleep(0.3)
+                time.sleep(0.2)
                 
             except Exception as e:
-                print(f"  Ошибка: {e}")
-                break
+                skip += batch_size
+                consecutive_errors += 1
         
-        print(f"  Всего корректировок: {len(corrections)}")
+        print(f"  Всего корректировок за период: {len(corrections)}")
         
         records = []
         
